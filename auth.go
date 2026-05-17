@@ -16,7 +16,7 @@ const (
 	authBase    = "https://iq4server.rainbird.com/coreidentityserver"
 	clientID    = "C5A6F324-3CD3-4B22-9F78-B4835BA55D25"
 	redirectURI = "https://iq4.rainbird.com/auth.html"
-	userAgent   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+	userAgent   = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
 var tokenRegex = regexp.MustCompile(`access_token=([^&"]+)`)
@@ -56,6 +56,15 @@ func Authenticate(username, password string) (string, error) {
 	// Step 1: GET login page
 	req, _ := http.NewRequest("GET", loginURL, nil)
 	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("get login page: %w", err)
@@ -83,6 +92,14 @@ func Authenticate(username, password string) (string, error) {
 	req, _ = http.NewRequest("POST", loginURL, strings.NewReader(form.Encode()))
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Origin", authBase)
+	req.Header.Set("Referer", loginURL)
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Sec-Fetch-User", "?1")
 
 	resp, err = client.Do(req)
 	if err != nil {
