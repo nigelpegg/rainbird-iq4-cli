@@ -157,6 +157,7 @@ Returns the full program step detail (needed for updates).
 - **CreateProgramSteps**: `actionId` must be the string `"RunStation"` (not an int), `programId` must be a string, `runTimeLong` should be `null`. Runtime is set separately via `UpdateProgramStep`.
 - **DeleteStartTime**: The `DELETE /StartTime/DeleteStartTime` endpoint returns 403 for some start times. Use `PATCH /StartTime/v2/UpdateBatches` instead – it works reliably.
 - **UpdateProgram**: Send the full program object back (GET it first, modify fields, PUT it back).
+- **CreateStartTime**: Must include `companyId` matching the program's `companyId`. The API silently accepts creation with `companyId: 0` (returns 200 and an ID) but the resulting start time is invisible in the app and won't appear in `GetAllStartTimes`. Fetch `companyId` from `GetProgram` before creating.
 - **runTimeLong**: Uses .NET ticks (100-nanosecond units). 10 minutes = 6000000000.
 
 ## Local API – what still works

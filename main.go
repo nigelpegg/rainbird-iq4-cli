@@ -6,6 +6,7 @@
 //
 //	iq4-cli login <username> <password>       Authenticate and store token
 //	iq4-cli logout                            Clear stored token
+//	iq4-cli save-token                        Read a JWT from stdin and save it (browser fallback)
 //	iq4-cli sites                             List all sites
 //	iq4-cli controllers                       List all controllers with connection status
 //	iq4-cli stations <controller-id>          List stations for a controller
@@ -18,6 +19,7 @@
 //	iq4-cli set-adjust <program-id> <percent> Set seasonal adjust percentage
 //	iq4-cli set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFrSaSu" or "1111111")
 //	iq4-cli set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m")
+//	iq4-cli set-name <program-id> <name>      Rename a program
 //	iq4-cli add-start <program-id> <time>     Add a start time (e.g. "06:00")
 //	iq4-cli del-start <start-time-id>         Delete a start time
 //	iq4-cli add-step <program-id> <station-id> Assign a station to a program
@@ -25,6 +27,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -47,6 +50,8 @@ func main() {
 		cmdLogin(args)
 	case "logout":
 		cmdLogout()
+	case "save-token":
+		cmdSaveToken()
 	case "sites":
 		cmdSites()
 	case "controllers":
@@ -65,6 +70,8 @@ func main() {
 		cmdSetAdjust(args)
 	case "set-days":
 		cmdSetDays(args)
+	case "set-name":
+		cmdSetName(args)
 	case "set-runtime":
 		cmdSetRuntime(args)
 	case "add-start":
@@ -90,6 +97,7 @@ All output is JSON for easy parsing by scripts and LLMs.
 Commands:
   login <username> <password>       Authenticate and store token
   logout                            Clear stored token
+  save-token                        Read a JWT from stdin and save it (browser fallback)
 
   sites                             List all sites
   controllers                       List all controllers with connection status
@@ -106,7 +114,8 @@ Commands:
   set-adjust <program-id> <percent> Set seasonal adjust percentage (e.g. 130 for 130%%)
   set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFr", "MoWeFr", "1010100")
   set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m", "0h15m")
-  add-start <program-id> <time>     Add a start time (e.g. "06:00", "18:30")
+  set-name <program-id> <name>      Rename a program
+  add-start <program-id> <time> [company-id]  Add a start time (e.g. "06:00"); company-id avoids an extra API call
   del-start <program-id> <start-time-id>  Delete a start time
   add-step <program-id> <station-id> Assign a station to a program
   del-step <step-id>                 Remove a station from a program
@@ -178,6 +187,29 @@ func cmdLogin(args []string) {
 func cmdLogout() {
 	ClearToken()
 	fmt.Fprintf(os.Stderr, "logged out\n")
+}
+
+func cmdSaveToken() {
+	fmt.Fprintf(os.Stderr, "Paste your JWT token and press Enter (or Ctrl-D):\n")
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	var token string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			token = line
+			break
+		}
+	}
+	if token == "" {
+		fatalf("no token provided")
+	}
+	// Validate it works
+	client := NewClient(token)
+	_, err := client.GetSites()
+	check(err)
+	check(SaveToken(token))
+	fmt.Fprintf(os.Stderr, "token saved and validated successfully\n")
 }
 
 func cmdSites() {
@@ -371,6 +403,21 @@ func cmdSetAdjust(args []string) {
 	fmt.Fprintf(os.Stderr, "set seasonal adjust to %d%% for program %d\n", pct, id)
 }
 
+func cmdSetName(args []string) {
+	requireArg(args, 2, "set-name <program-id> <name>")
+	c := requireClient()
+	id := requireInt(args[0], "program-id")
+	name := strings.Join(args[1:], " ")
+
+	detail, err := c.GetProgramDetail(id)
+	check(err)
+
+	detail["name"] = name
+	check(c.UpdateProgram(detail))
+
+	fmt.Fprintf(os.Stderr, "renamed program %d to %q\n", id, name)
+}
+
 func cmdSetDays(args []string) {
 	requireArg(args, 2, "set-days <program-id> <days>")
 	c := requireClient()
@@ -403,20 +450,36 @@ func cmdSetRuntime(args []string) {
 }
 
 func cmdAddStart(args []string) {
-	requireArg(args, 2, "add-start <program-id> <time>")
+	requireArg(args, 2, "add-start <program-id> <time> [company-id]")
 	c := requireClient()
 	programID := requireInt(args[0], "program-id")
 	t := parseTime(args[1])
+
+	// companyId is required for the start time to be visible in the app.
+	// Callers should pass it directly (avoids an extra API round-trip).
+	// If omitted, we fetch it from the program — slower but always correct.
+	var companyID int
+	if len(args) >= 3 {
+		companyID = requireInt(args[2], "company-id")
+	} else {
+		detail, err := c.GetProgramDetail(programID)
+		if err == nil {
+			if cid, ok := detail["companyId"].(float64); ok {
+				companyID = int(cid)
+			}
+		}
+	}
 
 	st := StartTime{
 		DateTime:  fmt.Sprintf("1999-09-09T%s:00", t),
 		ProgramID: programID,
 		Enabled:   true,
+		CompanyID: companyID,
 	}
 	created, err := c.CreateStartTime(st)
 	check(err)
 
-	fmt.Fprintf(os.Stderr, "created start time %d at %s for program %d\n", created.ID, t, programID)
+	fmt.Fprintf(os.Stderr, "created start time %d at %s for program %d (companyId=%d)\n", created.ID, t, programID, companyID)
 	output(created)
 }
 
