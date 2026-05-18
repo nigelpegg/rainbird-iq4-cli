@@ -19,7 +19,7 @@
 //	iq4-cli set-adjust <program-id> <percent> Set seasonal adjust percentage
 //	iq4-cli set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFrSaSu" or "1111111")
 //	iq4-cli set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m")
-//	iq4-cli set-name <program-id> <name>      Rename a program
+//	iq4-cli set-details <program-id> <name>      Rename a program
 //	iq4-cli add-start <program-id> <time>     Add a start time (e.g. "06:00")
 //	iq4-cli del-start <start-time-id>         Delete a start time
 //	iq4-cli add-step <program-id> <station-id> Assign a station to a program
@@ -70,8 +70,8 @@ func main() {
 		cmdSetAdjust(args)
 	case "set-days":
 		cmdSetDays(args)
-	case "set-name":
-		cmdSetName(args)
+	case "set-details":
+		cmdSetDetails(args)
 	case "set-runtime":
 		cmdSetRuntime(args)
 	case "add-start":
@@ -114,7 +114,7 @@ Commands:
   set-adjust <program-id> <percent> Set seasonal adjust percentage (e.g. 130 for 130%%)
   set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFr", "MoWeFr", "1010100")
   set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m", "0h15m")
-  set-name <program-id> <name>      Rename a program
+  set-details <program-id> <name>      Rename a program
   add-start <program-id> <time> [company-id]  Add a start time (e.g. "06:00"); company-id avoids an extra API call
   del-start <program-id> <start-time-id>  Delete a start time
   add-step <program-id> <station-id> Assign a station to a program
@@ -398,24 +398,47 @@ func cmdSetAdjust(args []string) {
 	check(err)
 
 	detail["programAdjust"] = pct
+	delete(detail, "startTime")
+	delete(detail, "programStep")
 	check(c.UpdateProgram(detail))
 
 	fmt.Fprintf(os.Stderr, "set seasonal adjust to %d%% for program %d\n", pct, id)
 }
 
-func cmdSetName(args []string) {
-	requireArg(args, 2, "set-name <program-id> <name>")
+func cmdSetDetails(args []string) {
+	requireArg(args, 2, "set-details <program-id> <name> [field=value ...]")
 	c := requireClient()
 	id := requireInt(args[0], "program-id")
-	name := strings.Join(args[1:], " ")
+	name := args[1]
 
 	detail, err := c.GetProgramDetail(id)
 	check(err)
 
 	detail["name"] = name
-	check(c.UpdateProgram(detail))
 
-	fmt.Fprintf(os.Stderr, "renamed program %d to %q\n", id, name)
+	// Optional extra field=value overrides applied to the same UpdateProgram call.
+	// Values that parse as integers are stored as numbers; otherwise as strings.
+	for _, kv := range args[2:] {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			fatalf("invalid field override %q: expected key=value", kv)
+		}
+		k, v := parts[0], parts[1]
+		if n, err := strconv.Atoi(v); err == nil {
+			detail[k] = n
+		} else {
+			detail[k] = v
+		}
+	}
+
+	// GetProgram always returns startTime and programStep as empty arrays.
+	// Sending them back via UpdateProgram clears any start times that exist,
+	// so strip them before the PUT to leave those resources untouched.
+	delete(detail, "startTime")
+	delete(detail, "programStep")
+
+	check(c.UpdateProgram(detail))
+	fmt.Fprintf(os.Stderr, "updated program %d\n", id)
 }
 
 func cmdSetDays(args []string) {
@@ -428,6 +451,8 @@ func cmdSetDays(args []string) {
 	check(err)
 
 	detail["weekDays"] = days
+	delete(detail, "startTime")
+	delete(detail, "programStep")
 	check(c.UpdateProgram(detail))
 
 	fmt.Fprintf(os.Stderr, "set water days to %s for program %d\n", formatDays(days), id)
@@ -582,14 +607,44 @@ func formatTimeSpan(d time.Duration) string {
 }
 
 func parseTime(s string) string {
-	parts := strings.Split(s, ":")
-	if len(parts) != 2 {
-		fatalf("invalid time: %s (use HH:MM format)", s)
+	orig := s
+	s = strings.TrimSpace(s)
+
+	// Detect and strip am/pm suffix (case-insensitive)
+	pm := false
+	am := false
+	lower := strings.ToLower(s)
+	if strings.HasSuffix(lower, "pm") {
+		pm = true
+		s = s[:len(s)-2]
+	} else if strings.HasSuffix(lower, "am") {
+		am = true
+		s = s[:len(s)-2]
 	}
-	h := requireInt(parts[0], "hour")
-	m := requireInt(parts[1], "minute")
+	_ = am // am just suppresses 12→0 for 12am edge case below
+
+	var h, m int
+	if strings.Contains(s, ":") {
+		parts := strings.Split(s, ":")
+		if len(parts) != 2 {
+			fatalf("invalid time: %s", orig)
+		}
+		h = requireInt(strings.TrimSpace(parts[0]), "hour")
+		m = requireInt(strings.TrimSpace(parts[1]), "minute")
+	} else {
+		h = requireInt(strings.TrimSpace(s), "hour")
+		m = 0
+	}
+
+	// Apply am/pm
+	if pm && h != 12 {
+		h += 12
+	} else if am && h == 12 {
+		h = 0
+	}
+
 	if h < 0 || h > 23 || m < 0 || m > 59 {
-		fatalf("invalid time: %s", s)
+		fatalf("invalid time: %s", orig)
 	}
 	return fmt.Sprintf("%02d:%02d", h, m)
 }

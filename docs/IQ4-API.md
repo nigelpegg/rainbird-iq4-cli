@@ -145,7 +145,7 @@ Returns the full program step detail (needed for updates).
 
 | Operation | Method | Endpoint | Body |
 |-----------|--------|----------|------|
-| Update program | `PUT` | `/Program/UpdateProgram` | Full program object from `GetProgram` |
+| Update program details | `PUT` | `/Program/UpdateProgram` | Full program object from `GetProgram` (use `iq4-cli set-details`) |
 | Update program step | `PUT` | `/ProgramStep/UpdateProgramStep` | Full step from `GetProgramStepById` |
 | Create start time | `POST` | `/StartTime/CreateStartTime` | Start time object |
 | Delete start time | `PATCH` | `/StartTime/v2/UpdateBatches` | `{"add":[],"update":[],"delete":{"id":<programId>,"ids":[<startTimeId>]}}` |
@@ -156,7 +156,7 @@ Returns the full program step detail (needed for updates).
 
 - **CreateProgramSteps**: `actionId` must be the string `"RunStation"` (not an int), `programId` must be a string, `runTimeLong` should be `null`. Runtime is set separately via `UpdateProgramStep`.
 - **DeleteStartTime**: The `DELETE /StartTime/DeleteStartTime` endpoint returns 403 for some start times. Use `PATCH /StartTime/v2/UpdateBatches` instead – it works reliably.
-- **UpdateProgram**: Send the full program object back (GET it first, modify fields, PUT it back).
+- **UpdateProgram**: Send the full program object back (GET it first, modify fields, PUT it back). Always delete `startTime` and `programStep` from the object before PUT — `GetProgram` returns these as empty arrays, and sending them back clears any existing start times.
 - **CreateStartTime**: Must include `companyId` matching the program's `companyId`. The API silently accepts creation with `companyId: 0` (returns 200 and an ID) but the resulting start time is invisible in the app and won't appear in `GetAllStartTimes`. Fetch `companyId` from `GetProgram` before creating.
 - **runTimeLong**: Uses .NET ticks (100-nanosecond units). 10 minutes = 6000000000.
 
