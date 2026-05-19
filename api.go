@@ -178,6 +178,12 @@ func (c *Client) DeleteStartTime(programID, startTimeID int) error {
 	return err
 }
 
+// StopAllIrrigation sends a stop command to a controller (satellite).
+func (c *Client) StopAllIrrigation(satelliteID int) error {
+	_, err := c.request("POST", "/Satellite/StopAllIrrigation", []int{satelliteID})
+	return err
+}
+
 // UpdateProgramFields patches program fields (e.g. name) via /Program/UpdateBatches.
 // This is the same endpoint the IQ4 app uses — does not call UpdateProgram PUT.
 func (c *Client) UpdateProgramFields(programID int, fields map[string]any) error {

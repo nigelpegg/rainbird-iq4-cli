@@ -20,6 +20,7 @@
 //	iq4-cli set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFrSaSu" or "1111111")
 //	iq4-cli set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m")
 //	iq4-cli set-details <program-id> <name> [field=value ...] [addStart=HH:MM ...]  Update program; addStart embeds start times atomically
+//	iq4-cli stop-irrigation <satellite-id>        Stop all active irrigation on a controller
 //	iq4-cli set-runtimes [step-id=duration ...]  Set baseRunTime for steps via /ProgramStep/v3/UpdateBatches (IQ4-app-compatible)
 //	iq4-cli update-program <program-id> [field=value ...]  Patch program fields via /Program/UpdateBatches (IQ4-app-compatible)
 //	iq4-cli set-starts <program-id> [del=<start-time-id> ...] [time=HH:MM ...]  Atomically replace start times (IQ4-app-compatible)
@@ -77,6 +78,8 @@ func main() {
 		cmdSetDetails(args)
 	case "set-runtime":
 		cmdSetRuntime(args)
+	case "stop-irrigation":
+		cmdStopIrrigation(args)
 	case "set-runtimes":
 		cmdSetRuntimes(args)
 	case "update-program":
@@ -510,6 +513,14 @@ func cmdSetRuntime(args []string) {
 	check(c.UpdateProgramStep(step))
 
 	fmt.Fprintf(os.Stderr, "set runtime to %s for step %d\n", dur, id)
+}
+
+func cmdStopIrrigation(args []string) {
+	requireArg(args, 1, "stop-irrigation <satellite-id>")
+	c := requireClient()
+	id := requireInt(args[0], "satellite-id")
+	check(c.StopAllIrrigation(id))
+	fmt.Fprintf(os.Stderr, "stopped all irrigation on satellite %d\n", id)
 }
 
 func cmdSetRuntimes(args []string) {
