@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const apiBase = "https://iq4server.rainbird.com/coreapi/api"
@@ -171,6 +172,87 @@ func (c *Client) DeleteStartTime(programID, startTimeID int) error {
 		"delete": map[string]any{
 			"id":  programID,
 			"ids": []int{startTimeID},
+		},
+	}
+	_, err := c.request("PATCH", "/StartTime/v2/UpdateBatches", body)
+	return err
+}
+
+// UpdateProgramFields patches program fields (e.g. name) via /Program/UpdateBatches.
+// This is the same endpoint the IQ4 app uses — does not call UpdateProgram PUT.
+func (c *Client) UpdateProgramFields(programID int, fields map[string]any) error {
+	type patch struct {
+		Op    string `json:"op"`
+		Path  string `json:"path"`
+		Value any    `json:"value"`
+	}
+	patches := []patch{}
+	for k, v := range fields {
+		patches = append(patches, patch{Op: "replace", Path: "/" + k, Value: v})
+	}
+	body := map[string]any{
+		"ids":   []int{programID},
+		"patch": patches,
+	}
+	_, err := c.request("PATCH", "/Program/UpdateBatches", body)
+	return err
+}
+
+// UpdateProgramStepBatches sets baseRunTime (in seconds) for one or more program steps
+// via /ProgramStep/v3/UpdateBatches — the same endpoint the IQ4 app uses.
+func (c *Client) UpdateProgramStepBatches(steps map[int]int) error {
+	type entry struct {
+		ID    int    `json:"id"`
+		Op    string `json:"op"`
+		Path  string `json:"path"`
+		Value int    `json:"value"`
+	}
+	entries := []entry{}
+	for stepID, seconds := range steps {
+		entries = append(entries, entry{ID: stepID, Op: "replace", Path: "/baseRunTime", Value: seconds})
+	}
+	body := map[string]any{"patch": entries}
+	_, err := c.request("PATCH", "/ProgramStep/v3/UpdateBatches", body)
+	return err
+}
+
+// SetStartTimes atomically replaces start times for a program in a single UpdateBatches call.
+// deleteIDs: existing start time IDs to remove. addTimes: "HH:MM" strings to create.
+// Uses the same PATCH endpoint the IQ4 app uses — does not call UpdateProgram.
+func (c *Client) SetStartTimes(programID int, deleteIDs []int, addTimes []string) error {
+	type patch struct {
+		Op    string `json:"op"`
+		Path  string `json:"path"`
+		Value any    `json:"value"`
+	}
+	type addEntry struct {
+		ID    int     `json:"id"`
+		Patch []patch `json:"patch"`
+	}
+
+	adds := []addEntry{}
+	today := time.Now().Format("2006-01-02")
+	for _, t := range addTimes {
+		adds = append(adds, addEntry{
+			ID: 0,
+			Patch: []patch{
+				{Op: "add", Path: "/dateTimeLocal", Value: fmt.Sprintf("%sT%s:00", today, t)},
+				{Op: "add", Path: "/enabled", Value: true},
+				{Op: "add", Path: "/programId", Value: programID},
+			},
+		})
+	}
+
+	if deleteIDs == nil {
+		deleteIDs = []int{}
+	}
+
+	body := map[string]any{
+		"add":    adds,
+		"update": []any{},
+		"delete": map[string]any{
+			"id":  programID,
+			"ids": deleteIDs,
 		},
 	}
 	_, err := c.request("PATCH", "/StartTime/v2/UpdateBatches", body)

@@ -19,7 +19,10 @@
 //	iq4-cli set-adjust <program-id> <percent> Set seasonal adjust percentage
 //	iq4-cli set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFrSaSu" or "1111111")
 //	iq4-cli set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m")
-//	iq4-cli set-details <program-id> <name>      Rename a program
+//	iq4-cli set-details <program-id> <name> [field=value ...] [addStart=HH:MM ...]  Update program; addStart embeds start times atomically
+//	iq4-cli set-runtimes [step-id=duration ...]  Set baseRunTime for steps via /ProgramStep/v3/UpdateBatches (IQ4-app-compatible)
+//	iq4-cli update-program <program-id> [field=value ...]  Patch program fields via /Program/UpdateBatches (IQ4-app-compatible)
+//	iq4-cli set-starts <program-id> [del=<start-time-id> ...] [time=HH:MM ...]  Atomically replace start times (IQ4-app-compatible)
 //	iq4-cli add-start <program-id> <time>     Add a start time (e.g. "06:00")
 //	iq4-cli del-start <start-time-id>         Delete a start time
 //	iq4-cli add-step <program-id> <station-id> Assign a station to a program
@@ -74,6 +77,12 @@ func main() {
 		cmdSetDetails(args)
 	case "set-runtime":
 		cmdSetRuntime(args)
+	case "set-runtimes":
+		cmdSetRuntimes(args)
+	case "update-program":
+		cmdUpdateProgram(args)
+	case "set-starts":
+		cmdSetStarts(args)
 	case "add-start":
 		cmdAddStart(args)
 	case "del-start":
@@ -406,7 +415,7 @@ func cmdSetAdjust(args []string) {
 }
 
 func cmdSetDetails(args []string) {
-	requireArg(args, 2, "set-details <program-id> <name> [field=value ...]")
+	requireArg(args, 2, "set-details <program-id> <name> [field=value ...] [addStart=HH:MM ...]")
 	c := requireClient()
 	id := requireInt(args[0], "program-id")
 	name := args[1]
@@ -418,23 +427,52 @@ func cmdSetDetails(args []string) {
 
 	// Optional extra field=value overrides applied to the same UpdateProgram call.
 	// Values that parse as integers are stored as numbers; otherwise as strings.
+	// Fields in stringFields are always kept as strings regardless of value.
+	// addStart=HH:MM embeds start times directly in the UpdateProgram body so the
+	// controller receives them atomically in the same MQTT push.
+	stringFields := map[string]bool{
+		"weekDays":              true, // 7-char binary e.g. "1111111" — must stay string
+		"nextCyclicalStartDate": true, // ISO datetime string
+	}
+	var embeddedStarts []StartTime
+	companyID := 0
+	if cid, ok := detail["companyId"].(float64); ok {
+		companyID = int(cid)
+	}
 	for _, kv := range args[2:] {
 		parts := strings.SplitN(kv, "=", 2)
 		if len(parts) != 2 {
 			fatalf("invalid field override %q: expected key=value", kv)
 		}
 		k, v := parts[0], parts[1]
-		if n, err := strconv.Atoi(v); err == nil {
-			detail[k] = n
-		} else {
-			detail[k] = v
+		if k == "addStart" {
+			t := parseTime(v)
+			embeddedStarts = append(embeddedStarts, StartTime{
+				DateTime:  fmt.Sprintf("1999-09-09T%s:00", t),
+				ProgramID: id,
+				Enabled:   true,
+				CompanyID: companyID,
+			})
+			continue
 		}
+		if !stringFields[k] {
+			if n, err := strconv.Atoi(v); err == nil {
+				detail[k] = n
+				continue
+			}
+		}
+		detail[k] = v
 	}
 
-	// GetProgram always returns startTime and programStep as empty arrays.
-	// Sending them back via UpdateProgram clears any start times that exist,
-	// so strip them before the PUT to leave those resources untouched.
-	delete(detail, "startTime")
+	// If start times were provided via addStart=, embed them in the UpdateProgram body
+	// so they are set atomically and the controller receives them in the same MQTT push.
+	// Otherwise strip startTime — GetProgram returns it as an empty array and sending
+	// that back clears any existing start times.
+	if len(embeddedStarts) > 0 {
+		detail["startTime"] = embeddedStarts
+	} else {
+		delete(detail, "startTime")
+	}
 	delete(detail, "programStep")
 
 	check(c.UpdateProgram(detail))
@@ -472,6 +510,78 @@ func cmdSetRuntime(args []string) {
 	check(c.UpdateProgramStep(step))
 
 	fmt.Fprintf(os.Stderr, "set runtime to %s for step %d\n", dur, id)
+}
+
+func cmdSetRuntimes(args []string) {
+	requireArg(args, 1, "set-runtimes <step-id=duration> ...")
+	c := requireClient()
+
+	steps := map[int]int{}
+	for _, arg := range args {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			fatalf("invalid argument %q: expected step-id=duration", arg)
+		}
+		stepID := requireInt(parts[0], "step-id")
+		dur := parseDuration(parts[1])
+		steps[stepID] = int(dur.Seconds())
+	}
+
+	check(c.UpdateProgramStepBatches(steps))
+	fmt.Fprintf(os.Stderr, "set runtimes: %v\n", steps)
+	output(map[string]any{"updated": steps})
+}
+
+func cmdUpdateProgram(args []string) {
+	requireArg(args, 2, "update-program <program-id> [field=value ...]")
+	c := requireClient()
+	id := requireInt(args[0], "program-id")
+
+	fields := map[string]any{}
+	for _, kv := range args[1:] {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			fatalf("invalid argument %q: expected field=value", kv)
+		}
+		k, v := parts[0], parts[1]
+		if n, err := strconv.Atoi(v); err == nil {
+			fields[k] = n
+		} else {
+			fields[k] = v
+		}
+	}
+
+	check(c.UpdateProgramFields(id, fields))
+	fmt.Fprintf(os.Stderr, "updated program %d fields: %v\n", id, fields)
+	output(map[string]any{"programId": id, "updated": fields})
+}
+
+func cmdSetStarts(args []string) {
+	requireArg(args, 1, "set-starts <program-id> [del=<start-time-id> ...] [time=HH:MM ...]")
+	c := requireClient()
+	programID := requireInt(args[0], "program-id")
+
+	var deleteIDs []int
+	var addTimes []string
+
+	for _, arg := range args[1:] {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			fatalf("invalid argument %q: expected del=<id> or time=HH:MM", arg)
+		}
+		switch parts[0] {
+		case "del":
+			deleteIDs = append(deleteIDs, requireInt(parts[1], "start-time-id"))
+		case "time":
+			addTimes = append(addTimes, parseTime(parts[1]))
+		default:
+			fatalf("unknown argument key %q: expected del or time", parts[0])
+		}
+	}
+
+	check(c.SetStartTimes(programID, deleteIDs, addTimes))
+	fmt.Fprintf(os.Stderr, "set start times for program %d: deleted %v, added %v\n", programID, deleteIDs, addTimes)
+	output(map[string]any{"programId": programID, "deleted": deleteIDs, "added": addTimes})
 }
 
 func cmdAddStart(args []string) {
