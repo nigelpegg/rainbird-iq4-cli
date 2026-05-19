@@ -20,7 +20,8 @@
 //	iq4-cli set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFrSaSu" or "1111111")
 //	iq4-cli set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m")
 //	iq4-cli set-details <program-id> <name> [field=value ...] [addStart=HH:MM ...]  Update program; addStart embeds start times atomically
-//	iq4-cli stop-irrigation <satellite-id>        Stop all active irrigation on a controller
+//	iq4-cli stop-irrigation <satellite-id>             Stop all active irrigation on a controller
+//	iq4-cli run-stations [station-id=duration ...]     Manually run stations (e.g. 13889739=1m 13889740=1m)
 //	iq4-cli set-runtimes [step-id=duration ...]  Set baseRunTime for steps via /ProgramStep/v3/UpdateBatches (IQ4-app-compatible)
 //	iq4-cli update-program <program-id> [field=value ...]  Patch program fields via /Program/UpdateBatches (IQ4-app-compatible)
 //	iq4-cli set-starts <program-id> [del=<start-time-id> ...] [time=HH:MM ...]  Atomically replace start times (IQ4-app-compatible)
@@ -80,6 +81,8 @@ func main() {
 		cmdSetRuntime(args)
 	case "stop-irrigation":
 		cmdStopIrrigation(args)
+	case "run-stations":
+		cmdRunStations(args)
 	case "set-runtimes":
 		cmdSetRuntimes(args)
 	case "update-program":
@@ -521,6 +524,28 @@ func cmdStopIrrigation(args []string) {
 	id := requireInt(args[0], "satellite-id")
 	check(c.StopAllIrrigation(id))
 	fmt.Fprintf(os.Stderr, "stopped all irrigation on satellite %d\n", id)
+}
+
+func cmdRunStations(args []string) {
+	requireArg(args, 1, "run-stations <station-id=duration> ...")
+	c := requireClient()
+
+	var stationIDs []int
+	var seconds []int
+	for _, arg := range args {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			fatalf("invalid argument %q: expected station-id=duration", arg)
+		}
+		stationID := requireInt(parts[0], "station-id")
+		dur := parseDuration(parts[1])
+		stationIDs = append(stationIDs, stationID)
+		seconds = append(seconds, int(dur.Seconds()))
+	}
+
+	check(c.StartStations(stationIDs, seconds))
+	fmt.Fprintf(os.Stderr, "started stations %v for %v seconds\n", stationIDs, seconds)
+	output(map[string]any{"stationIds": stationIDs, "seconds": seconds})
 }
 
 func cmdSetRuntimes(args []string) {

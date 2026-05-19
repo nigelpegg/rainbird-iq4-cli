@@ -184,6 +184,19 @@ func (c *Client) StopAllIrrigation(satelliteID int) error {
 	return err
 }
 
+// StartStations manually runs stations for the given durations without modifying
+// the irrigation program. stationIDs and seconds must be the same length.
+// isGroupStart=false means stations run sequentially.
+func (c *Client) StartStations(stationIDs []int, seconds []int) error {
+	body := map[string]any{
+		"stationIds":   stationIDs,
+		"seconds":      seconds,
+		"isGroupStart": false,
+	}
+	_, err := c.request("POST", "/ManualOps/StartStations", body)
+	return err
+}
+
 // UpdateProgramFields patches program fields (e.g. name) via /Program/UpdateBatches.
 // This is the same endpoint the IQ4 app uses — does not call UpdateProgram PUT.
 func (c *Client) UpdateProgramFields(programID int, fields map[string]any) error {
