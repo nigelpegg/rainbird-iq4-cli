@@ -129,11 +129,16 @@ Commands:
   set-adjust <program-id> <percent> Set seasonal adjust percentage (e.g. 130 for 130%%)
   set-days <program-id> <days>      Set water days (e.g. "MoTuWeThFr", "MoWeFr", "1010100")
   set-runtime <step-id> <duration>  Set base runtime (e.g. "10m", "1h30m", "0h15m")
+  set-runtimes <step-id=duration> ...  Set runtimes for multiple steps via /ProgramStep/v3/UpdateBatches
   set-details <program-id> <name>      Rename a program
+  update-program <program-id> [field=value ...]  Patch program fields via /Program/UpdateBatches
+  set-starts <program-id> [del=<id> ...] [time=HH:MM ...]  Atomically replace start times
   add-start <program-id> <time> [company-id]  Add a start time (e.g. "06:00"); company-id avoids an extra API call
   del-start <program-id> <start-time-id>  Delete a start time
   add-step <program-id> <station-id> Assign a station to a program
   del-step <step-id>                 Remove a station from a program
+  stop-irrigation <satellite-id>    Stop all active irrigation on a controller
+  run-stations <station-id=duration> ...  Manually run stations (e.g. 13889739=1m)
 
 Data model:
   Company → Sites → Controllers → Stations (physical valve zones)
@@ -580,7 +585,11 @@ func cmdUpdateProgram(args []string) {
 			fatalf("invalid argument %q: expected field=value", kv)
 		}
 		k, v := parts[0], parts[1]
-		if n, err := strconv.Atoi(v); err == nil {
+		// A value wrapped in double quotes (e.g. weekDays="1111111") is always a string.
+		// This lets callers pass numeric-looking strings without int coercion.
+		if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+			fields[k] = v[1 : len(v)-1]
+		} else if n, err := strconv.Atoi(v); err == nil {
 			fields[k] = n
 		} else {
 			fields[k] = v
